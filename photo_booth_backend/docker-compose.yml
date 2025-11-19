@@ -1,0 +1,85 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    command: gunicorn photo_booth_backend.wsgi:application --bind 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: photo_booth_backend.settings
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    build: .
+    command: celery -A photo_booth_backend worker -l info -Q notifications,default
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: photo_booth_backend.settings
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      - redis
+      - postgres
+  beat:
+    build: .
+    command: celery -A photo_booth_backend beat -l info
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: photo_booth_backend.settings
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      - redis
+      - postgres
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-photo_booth}
+      POSTGRES_USER: ${POSTGRES_USER:-photo_booth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-photo_booth}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2024-06-11T03-13-30Z
+    command: server /data --address ":9000" --console-address ":9001"
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  minio-data:
+  postgres-data:
