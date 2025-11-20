@@ -73,6 +73,13 @@ def upload_photos_and_presign(photo_sources: List[str]) -> List[str]:
                 object_name=object_name,
                 expires=timedelta(hours=24),  # 24 hours
             )
+
+            # Replace internal Docker hostname with public endpoint
+            public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT", "localhost:9000")
+            internal_endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+            presigned = presigned.replace(f"http://{internal_endpoint}", f"http://{public_endpoint}")
+            presigned = presigned.replace(f"https://{internal_endpoint}", f"https://{public_endpoint}")
+
             presigned_urls.append(presigned)
         except (S3Error, requests.RequestException, ValueError) as exc:
             raise RuntimeError(f"Failed to upload photo: {exc}") from exc

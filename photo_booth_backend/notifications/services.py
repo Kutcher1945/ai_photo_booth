@@ -117,28 +117,20 @@ def _send_sms(payload: SendPayload) -> str:
     return f"Sent download link(s) for {len(photos)} photo(s) via SMS to {recipient}"
 
 
-def _send_telegram(payload: SendPayload) -> str:
-    recipient, photos = payload
+def _send_telegram_message(chat_id: str, text: str) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
 
     # Telegram accepts chat_id as numeric ID or @username once the user started the bot.
-    chat_id = recipient
     api_url = f"https://api.telegram.org/bot{token}/sendMessage"
-    message = "\n".join(
-        [
-            "Your AI Photo Booth pictures:",
-            *[photo for photo in photos],
-        ]
-    )
 
     response = requests.post(
         api_url,
         timeout=10,
         json={
             "chat_id": chat_id,
-            "text": message,
+            "text": text,
             "disable_web_page_preview": False,
         },
     )
@@ -147,8 +139,66 @@ def _send_telegram(payload: SendPayload) -> str:
             f"Telegram API error {response.status_code}: {response.text}"
         )
 
+def _send_telegram_photo(chat_id: str, photo_url: str, caption: str = "") -> None:
+    """Send a photo to Telegram by downloading and uploading it"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+
+    # Replace public endpoint with internal Docker endpoint for downloading
+    # This allows the worker to access MinIO from inside Docker network
+    public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT", "localhost:9000")
+    internal_endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    internal_url = photo_url.replace(f"http://{public_endpoint}", f"http://{internal_endpoint}")
+    internal_url = internal_url.replace(f"https://{public_endpoint}", f"http://{internal_endpoint}")
+
+    # Download the photo from MinIO using internal URL
+    photo_response = requests.get(internal_url, timeout=10)
+    photo_response.raise_for_status()
+    photo_content = photo_response.content
+
+    api_url = f"https://api.telegram.org/bot{token}/sendPhoto"
+
+    # Upload the photo as multipart/form-data
+    files = {
+        "photo": ("photo.jpg", photo_content, "image/jpeg")
+    }
+    data = {
+        "chat_id": chat_id,
+        "caption": caption,
+    }
+
+    response = requests.post(
+        api_url,
+        timeout=30,
+        files=files,
+        data=data,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Telegram API error {response.status_code}: {response.text}"
+        )
+
+
+def _send_telegram(payload: SendPayload) -> str:
+    recipient, photos = payload
+
+    # Send intro message
+    intro = f"📸 Your AI Photo Booth photos ({len(photos)} photo{'s' if len(photos) != 1 else ''}):"
+    _send_telegram_message(recipient, intro)
+
+    # Send each photo as actual image
+    for idx, photo_url in enumerate(photos):
+        try:
+            caption = f"Photo {idx + 1} of {len(photos)}"
+            _send_telegram_photo(recipient, photo_url, caption)
+        except Exception as e:
+            # If photo send fails, try sending as link
+            _send_telegram_message(recipient, f"Photo {idx + 1}: {photo_url}")
+            raise RuntimeError(f"Failed to send photo {idx + 1}: {str(e)}")
+
     username = recipient.removeprefix("@")
-    return f"Delivered {len(photos)} photo(s) to @{username or chat_id} on Telegram"
+    return f"Delivered {len(photos)} photo(s) to @{username or recipient} on Telegram"
 
 
 CHANNEL_SENDERS = {
@@ -212,3 +262,8 @@ def send_status_sms(phone: str, message: str) -> str:
     Send a simple status SMS (used to notify about email/telegram delivery).
     """
     return _twilio_send_message(phone, message)
+
+
+def send_plain_telegram_message(chat_id: str, message: str) -> str:
+    _send_telegram_message(chat_id, message)
+    return f"Delivered Telegram message to {chat_id}"

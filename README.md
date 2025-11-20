@@ -44,15 +44,15 @@ docker compose run --rm web python manage.py migrate
 ## API (бэкенд)
 Базовый URL: `http://localhost:8000/api/notifications/`
 - `POST /send/` — отправить фото. Body: `recipient`, `photos` (data URL или http ссылки), `preferred_method` = email|sms|telegram, `notification_phone?` (E.164). Возврат: `{accepted, task_id}`; Celery делает доставку с фолбэком по каналам, и при успешной email/telegram-доставке отправляет SMS-уведомление на `notification_phone`.
-- `POST /subscribe/` — подписать email: `{email}` (idempotent).
+- `POST /subscribe/` — подписать email и (опционально) сохранить Telegram-чат: `{email, telegram_chat_id?, telegram_username?}`.
 - `POST /broadcast/` — рассылка всем подписчикам: `{subject?, body}`.
-- `POST /notify/` — простое уведомление всем подписчикам (email реально, SMS/Telegram — симуляция пока): `{subject?, body, include_sms?, include_telegram?}`.
+- `POST /notify/` — рассылка по подписчикам: `{subject?, body, include_sms?, include_telegram?}`. Email отправляется всем, Telegram — тем, у кого сохранён `telegram_chat_id`; SMS пока симулируется.
 
 ## Логика доставки
 1) Фронт отправляет снимки → бэкенд → Celery-задача.
 2) Задача грузит фото в MinIO, генерирует presigned URL, для email — скачивает и прикрепляет как вложения (и/или ссылки, если вложения не доступны).
 3) Каналы с фолбэком: сначала preferred, если провал — дальше по списку (email → sms → telegram).
-4) Email: SMTP из env; Telegram: Bot API при наличии `TELEGRAM_BOT_TOKEN`; SMS: заглушка (только сообщение о попытке).
+4) Email: SMTP из env; Telegram: Bot API при наличии `TELEGRAM_BOT_TOKEN` (в т.ч. для массовых уведомлений, если у подписчика сохранён чат_id); SMS: заглушка (только сообщение о попытке, кроме статуса доставки).
 
 ## Директории
 - `ai-photo-booth/` — фронтенд (Next.js).
